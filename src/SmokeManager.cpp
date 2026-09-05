@@ -11,8 +11,6 @@
 
 namespace
 {
-    constexpr std::uint32_t kMaxDumpDepth = 12;
-
     constexpr std::uint32_t kVisibilityUpdateIntervalMS = 1000u;
 
     constexpr std::uint32_t kVisibilityHideDelayMS = 2000u;
@@ -312,10 +310,7 @@ void SmokeManager::AttachRules(RE::TESObjectREFR* a_refr,
         return;
     }
 
-    if (spdlog::should_log(spdlog::level::debug)) {
-        logger::debug("[DynamicSmoking] attach {} rules, tree BEFORE: {}", a_entries.size(), tag);
-        DumpTree(rootNode, 0);
-    }
+    logger::debug("[DynamicSmoking] attach {} rules: {}", a_entries.size(), tag);
 
     std::size_t attachedCount = 0;
     for (const auto& entry : a_entries) {
@@ -366,11 +361,6 @@ void SmokeManager::AttachRules(RE::TESObjectREFR* a_refr,
                 engineResult,
                 tag);
         }
-    }
-
-    if (spdlog::should_log(spdlog::level::debug)) {
-        logger::debug("[DynamicSmoke] tree AFTER: {}", tag);
-        DumpTree(rootNode, 0);
     }
 }
 
@@ -457,37 +447,6 @@ void SmokeManager::UpdateVisibility()
             }
         }
         ++it;
-    }
-}
-
-void SmokeManager::DumpTree(RE::NiAVObject* a_node, std::uint32_t a_depth)
-{
-    if (!a_node) {
-        return;
-    }
-
-    const std::string pad(a_depth * 2, ' ');
-    const auto*       rtti = a_node->GetRTTI();
-    const auto&       name = a_node->name;
-    const auto&       t = a_node->local.translate;
-    logger::debug("  {}[d{}] name='{}' rtti={} t=({:.2f}, {:.2f}, {:.2f})",
-        pad,
-        a_depth,
-        std::string_view(name.c_str() ? name.c_str() : ""),
-        std::string_view(rtti && rtti->GetName() ? rtti->GetName() : "?"),
-        t.x,
-        t.y,
-        t.z);
-
-    if (a_depth >= kMaxDumpDepth) {
-        return;
-    }
-    if (auto* asNode = a_node->AsNode()) {
-        for (const auto& child : asNode->GetChildren()) {
-            if (child) {
-                DumpTree(child.get(), a_depth + 1);
-            }
-        }
     }
 }
 

@@ -51,8 +51,6 @@ private:
 
     void RegisterTracked(RE::TESObjectREFR* a_refr, const std::string& a_anchorName);
 
-    static void DumpTree(RE::NiAVObject* a_node, std::uint32_t a_depth);
-
     static void ReregisterEmitter(RE::NiAVObject* a_node);
 
     std::map<std::string, Config::TargetSet> rawConfigs;
