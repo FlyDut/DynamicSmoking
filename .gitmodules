@@ -1,0 +1,19 @@
+[submodule "lib/glaze"]
+	path = lib/glaze
+	url = https://github.com/stephenberry/glaze.git
+[submodule "lib/CommonLibSSE-NG"]
+	path = lib/CommonLibSSE-NG
+	url = https://github.com/alandtse/CommonLibSSE-NG.git
+	branch = ng
+[submodule "lib/spdlog"]
+	path = lib/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "lib/DirectXTK"]
+	path = lib/DirectXTK
+	url = https://github.com/microsoft/DirectXTK.git
+[submodule "lib/DirectXMath"]
+	path = lib/DirectXMath
+	url = https://github.com/microsoft/DirectXMath.git
+[submodule "lib/SimpleIni"]
+	path = lib/SimpleIni
+	url = https://github.com/brofield/simpleini.git

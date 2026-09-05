@@ -1,0 +1,9 @@
+build/
+out/
+.cache/
+.xmake/
+.vscode/
+.idea/
+*.log
+*.user
+lib/
