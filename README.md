@@ -2,47 +2,104 @@
 
 Dynamic Smoking Candles SKSE Plugin
 
-《上古卷轴 5：天际》（Skyrim SE/AE）的 SKSE 插件模组，目标是将 **Smoking Torches and Candles** 模组的功能**配置化**：通过 JSON 配置，将 Addon Node 动态附加到指定模型上，从而用数据驱动的方式替代硬编码的烟雾效果。
+> **中文**：[README.zh.md](README.zh.md)
 
-## 环境构建
+An SKSE plugin mod for *The Elder Scrolls V: Skyrim* (SE/AE), aiming to make the features of the **Smoking Torches and Candles** mod **configurable**: attach Addon Nodes to specified models dynamically via JSON configuration, replacing hardcoded smoke effects with a data-driven approach.
 
-### 前置条件
+## Build Environment
 
-- **xmake** ≥ 3.0.0（构建系统）
-- **clang-cl**（编译器，需安装 LLVM；配合 MSVC 兼容模式 `-fms-compatibility`）
-- **Visual Studio**（提供 Windows SDK 与库文件）
-- **Git**（用于拉取子模块）
+### Prerequisites
 
-项目使用 **C++23** 标准，仅支持 `windows`/`x64` 平台。
+- **xmake** ≥ 3.0.0 (build system)
+- **clang-cl** (compiler; requires LLVM, used with MSVC compatibility mode `-fms-compatibility`)
+- **Visual Studio** (provides Windows SDK and library files)
+- **Git** (used to pull submodules)
 
-### 依赖
+The project uses the **C++23** standard and only supports the `windows`/`x64` platform.
 
-所有第三方依赖通过 Git 子模块管理（位于 `lib/` 目录）：
+### Dependencies
 
-| 依赖 | 用途 |
+All third-party dependencies are managed via Git submodules (located in the `lib/` directory):
+
+| Dependency | Purpose |
 | --- | --- |
-| [CommonLibSSE-NG](https://github.com/alandtse/CommonLibSSE-NG) | SKSE 插件框架与反向工程 API（`RE`/`REL`/`SKSE` 命名空间） |
-| [spdlog](https://github.com/gabime/spdlog) | 日志库 |
-| [glaze](https://github.com/stephenberry/glaze) | JSON 配置解析 |
-| [SimpleIni](https://github.com/brofield/simpleini) | INI 设置文件解析 |
-| [DirectXTK](https://github.com/microsoft/DirectXTK) / [DirectXMath](https://github.com/microsoft/DirectXMath) | CommonLibSSE-NG 依赖 |
+| [CommonLibSSE-NG](https://github.com/alandtse/CommonLibSSE-NG) | SKSE plugin framework and reverse-engineering API (`RE`/`REL`/`SKSE` namespaces) |
+| [spdlog](https://github.com/gabime/spdlog) | Logging library |
+| [glaze](https://github.com/stephenberry/glaze) | JSON configuration parsing |
+| [SimpleIni](https://github.com/brofield/simpleini) | INI settings file parsing |
+| [DirectXTK](https://github.com/microsoft/DirectXTK) / [DirectXMath](https://github.com/microsoft/DirectXMath) | Dependencies of CommonLibSSE-NG |
 
-### 构建步骤
+### Build Steps
 
 ```bash
-# 1. 初始化并拉取所有子模块
+# 1. Initialize and pull all submodules
 git submodule update --init --recursive
 
-# 2. 构建（Debug 或 Release）
+# 2. Build (Debug or Release)
 xmake f -m release
 xmake
 ```
 
-生成的 DLL 位于 `build/windows/x64/release/`，将其安装至游戏目录 `Data\SKSE\Plugins\` 即可。
+The generated DLL is located in `build/windows/x64/release/`; install it to the game directory `Data\SKSE\Plugins\`.
 
-## Hook 实现
+## Hook Implementation
 
-本模组的 Hook 实现源自 [LightPlacer](https://github.com/powerof3/LightPlacer) 模组，并在此基础上实现了烟雾发射器的配置化附加。
+The hook implementation of this mod is derived from the [LightPlacer](https://github.com/powerof3/LightPlacer) mod, extended with configurable attachment of smoke emitters.
 
-- 配置文件（JSON）放置于 `Data\DynamicSmoking\`
-- SKSE设置文件（INI）位于 `Data\SKSE\Plugins\DynamicSmoking.ini`
+## Configuration Rules
+
+The mod recursively scans all `.json` files under the `Data\DynamicSmoking\` directory as configuration files. Each file contains an array of rules (a list of `TargetSet`).
+
+### Configuration File Format
+
+```json
+[
+  {
+    "models": [
+      "meshes\\clutter\\candlehorn01.nif",
+      "candlehorn02.nif"
+    ],
+    "nodes": [
+      {
+        "formId": "SomePlugin.esp|0x800",
+        "offset": [0.0, 0.0, 0.0]
+      }
+    ]
+  }
+]
+```
+
+### Field Reference
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `models` | `string[]` | The set of models to attach nodes to; case-insensitive |
+| `nodes` | `object[]` | The list of node rules to attach to this group of models |
+| `nodes[].formId` | `string` | The form reference of the Addon Node, in the format `plugin name\|formID` (hexadecimal, optional `0x` prefix); must point to a `BGSAddonNode` record |
+| `nodes[].offset` | `number[3]` | The 3D offset `[x, y, z]` of the node relative to the model root node (in game units) |
+
+### Model Matching Rules
+
+- If the model path contains `\`, it is treated as a **full-path** match relative to `meshes\` (`/` is automatically normalized to `\`);
+- Otherwise it matches by **file name** only.
+
+A full-path match takes precedence as a special case and no longer applies the file-name rule; when the same model appears in multiple configurations, its rules are merged.
+
+### formId Parsing
+
+`formId` is split by `|` into two parts:
+
+- Left part: the plugin name (including the `.esp`/`.esm`/`.esl` suffix);
+- Right part: the hexadecimal formID (`0x` prefix optional, e.g. `0x800` or `800`).
+
+After parsing, the Addon Node record is located via `TESDataHandler::LookupForm<BGSAddonNode>`, and its `index` is used as the `value` of a `BSValueNode`, which is passed to the engine's `AttachAddonNodes` to actually attach the smoke/particle emitters.
+
+### Settings File (INI)
+
+The SKSE settings file is located at `Data\SKSE\Plugins\DynamicSmoking.ini`; the `[Settings]` section contains:
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `fMaxDistance` | `900.0` | Maximum distance at which the smoke is visible |
+| `fMinDistance` | `400.0` | Minimum distance at which line-of-sight culling takes effect |
+| `bEnableLineOfSightCulling` | `false` | Whether line-of-sight culling is enabled |
