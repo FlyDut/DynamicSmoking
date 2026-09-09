@@ -16,6 +16,7 @@ if is_mode("debug") then
     set_runtimes("MTd")
 else
     set_runtimes("MT")
+    set_symbols("debug", "pdb") 
 end
 
 target("spdlog")

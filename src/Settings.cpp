@@ -54,7 +54,7 @@ namespace Settings
 
             ini.SetValue(kSection, kKeyMaxDistance, fmt::format("{}", kDefaultMaxDistance).c_str());
             ini.SetValue(kSection, kKeyMinDistance, fmt::format("{}", kDefaultMinDistance).c_str());
-            ini.SetValue(kSection, kKeyLineOfSight, "false");
+            ini.SetValue(kSection, kKeyLineOfSight, "true");
             if (ini.SaveFile(path.string().c_str()) < 0) {
                 logger::error("[DynamicSmoking] failed to write default config: {}", path.string());
             }
