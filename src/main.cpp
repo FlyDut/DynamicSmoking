@@ -25,7 +25,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 
     SKSE::log::info("DynamicSmoking loaded");
 
-    // 为CellUpdate hook提供一个64字节的跳板内存地址
+    // 为 CellUpdate 的 call hook 提供跳板内存
     SKSE::AllocTrampoline(64);
 
     if (!SmokeManager::GetSingleton()->ReadConfigs()) {

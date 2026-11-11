@@ -313,6 +313,7 @@ void SmokeManager::AttachRules(RE::TESObjectREFR* a_refr,
     logger::debug("[DynamicSmoking] attach {} rules: {}", a_entries.size(), tag);
 
     std::size_t attachedCount = 0;
+    std::vector<RE::NiPointer<RE::BSValueNode>> newAnchors;
     for (const auto& entry : a_entries) {
         const auto anchorName = fmt::format("DSC_Anchor_{}_{}", entry.fileIdx, entry.nodeIdx);
         if (rootNode->GetObjectByName(RE::BSFixedString(anchorName))) {
@@ -336,7 +337,8 @@ void SmokeManager::AttachRules(RE::TESObjectREFR* a_refr,
             entry.rule.offset[2] };
 
         rootNode->AttachChild(valueNode.get());
-        RegisterTracked(a_refr, anchorName);
+        RegisterTracked(a_refr, anchorName, valueNode.get());
+        newAnchors.push_back(valueNode);
         ++attachedCount;
         logger::info("[DynamicSmoke] anchor '{}' formId='{}' value={} attached: {}",
             anchorName,
@@ -361,14 +363,34 @@ void SmokeManager::AttachRules(RE::TESObjectREFR* a_refr,
                 engineResult,
                 tag);
         }
+
+        // AttachAddonNodes 只负责把 addon 挂到节点上，不保证节点已进入 MPS 的 emitter 列表。
+        // 这里显式走一次 Toggle(true) 完成注册；失败时再用旧的手动注册兜底。
+        for (auto& anchor : newAnchors) {
+            if (!anchor) {
+                continue;
+            }
+            if (!ToggleEmitter(anchor.get(), true)) {
+                logger::warn("[DynamicSmoke] initial ToggleMasterParticleAddonNodes failed for '{}': {}",
+                    std::string_view(anchor->name.c_str() ? anchor->name.c_str() : ""),
+                    tag);
+            }
+            ReregisterEmitter(anchor.get());
+        }
     }
 }
 
-void SmokeManager::RegisterTracked(RE::TESObjectREFR* a_refr, const std::string& a_anchorName)
+void SmokeManager::RegisterTracked(RE::TESObjectREFR* a_refr, const std::string& a_anchorName, RE::BSValueNode* a_anchor)
 {
     const RE::ObjectRefHandle handle{ a_refr };
     for (auto& entry : tracked) {
         if (entry.refHandle == handle && entry.anchorName == a_anchorName) {
+            // 同一个 ref 重新加载 3D 时可能创建了新锚点；先把旧锚点从 MPS 摘掉，
+            // 否则旧锚点会继续被全局 MPS 持有。
+            if (entry.anchor && entry.anchor.get() != a_anchor) {
+                DetachAnchor(entry.anchor.get(), nullptr);
+            }
+            entry.anchor.reset(a_anchor);
             entry.visible = true;
             entry.hiding = false;
             entry.hiddenSinceMS = 0;
@@ -376,15 +398,12 @@ void SmokeManager::RegisterTracked(RE::TESObjectREFR* a_refr, const std::string&
         }
     }
     tracked.push_back(TrackedSmoke{ .refHandle = handle, .anchorName = a_anchorName, .visible = true });
+    tracked.back().anchor.reset(a_anchor);
 }
 
 void SmokeManager::UpdateVisibility()
 {
     const std::uint32_t nowMS = RE::BSTimer::GetSingleton()->runTimeMS;
-    if (nowMS - lastUpdateMS < kVisibilityUpdateIntervalMS) {
-        return;
-    }
-    lastUpdateMS = nowMS;
 
     std::lock_guard<std::mutex> guard(lock);
 
@@ -392,20 +411,52 @@ void SmokeManager::UpdateVisibility()
     if (!player) {
         return;
     }
+    auto* playerCell = player->GetParentCell();
+    if (!playerCell) {
+        return;
+    }
+
+    // 换 cell 时跳过一次间隔限制，立刻清理旧 cell 的锚点。
+    const auto playerCellID = playerCell->GetFormID();
+    if (playerCellID != lastPlayerCellID) {
+        lastPlayerCellID = playerCellID;
+        lastUpdateMS = nowMS - kVisibilityUpdateIntervalMS;
+    }
+
+    if (nowMS - lastUpdateMS < kVisibilityUpdateIntervalMS) {
+        return;
+    }
+    lastUpdateMS = nowMS;
+
     const RE::NiPoint3 playerPos = player->GetPosition();
     const float        maxDistSq = Settings::GetMaxDistance() * Settings::GetMaxDistance();
     const float        minDistSq = Settings::GetMinDistance() * Settings::GetMinDistance();
 
     for (auto it = tracked.begin(); it != tracked.end();) {
         auto                          refr = it->refHandle.get();
+        auto*                         refrCell = refr ? refr->GetParentCell() : nullptr;
         RE::NiPointer<RE::NiAVObject> root{ refr ? refr->Get3D() : nullptr };
-        if (!refr || !root) {
+        const bool otherCell = refrCell != playerCell;
+        const bool shouldCleanCell = otherCell &&
+            (!playerCell->IsExteriorCell() || (refrCell && !refrCell->IsExteriorCell()));
+        if (refr && shouldCleanCell) {
+            logger::debug("[DynamicSmoke] cell cleanup: anchor='{}' refr={} cell={:#x} playerCell={:#x}",
+                it->anchorName,
+                refr->GetFormID(),
+                reinterpret_cast<std::uintptr_t>(refrCell),
+                reinterpret_cast<std::uintptr_t>(playerCell));
+        }
+        if (!refr || !root || shouldCleanCell) {
+            DetachTrackedAnchor(*it);
             it = tracked.erase(it);
             continue;
         }
 
-        auto* node = root->GetObjectByName(RE::BSFixedString(it->anchorName.c_str()));
-        if (!node) {
+        // 以 tracked 中保存的锚点指针为准，避免 3D 已被替换却误操作同名的新节点。
+        auto* rootNode = root->AsNode();
+        auto* node = it->anchor.get();
+        if (!rootNode || !node || !IsAnchorUnderRoot(node, rootNode)) {
+            DetachTrackedAnchor(*it);
             it = tracked.erase(it);
             continue;
         }
@@ -427,7 +478,9 @@ void SmokeManager::UpdateVisibility()
 
         if (shouldShow) {
             if (!entry.visible) {
-                node->SetAppCulled(false);
+                if (!ToggleEmitter(node, true)) {
+                    node->SetAppCulled(false);
+                }
                 ReregisterEmitter(node);
                 entry.visible = true;
             }
@@ -436,7 +489,9 @@ void SmokeManager::UpdateVisibility()
             if (entry.hiding) {
                 // 第二次依然不可见，才会真正隐藏，防止马上隐藏造成的突兀感
                 if (nowMS - entry.hiddenSinceMS >= kVisibilityHideDelayMS) {
-                    node->SetAppCulled(true);
+                    if (!ToggleEmitter(node, false)) {
+                        node->SetAppCulled(true);
+                    }
                     entry.visible = false;
                     entry.hiding = false;
                 }
@@ -448,6 +503,30 @@ void SmokeManager::UpdateVisibility()
         }
         ++it;
     }
+}
+
+void SmokeManager::DetachTrackedAnchor(TrackedSmoke& a_entry, RE::NiNode* a_root)
+{
+    if (!a_entry.anchor) {
+        return;
+    }
+
+    DetachAnchor(a_entry.anchor.get(), a_root);
+    a_entry.anchor.reset();
+}
+
+bool SmokeManager::IsAnchorUnderRoot(RE::NiAVObject* a_node, RE::NiNode* a_root)
+{
+    if (!a_node || !a_root) {
+        return false;
+    }
+
+    for (auto* parent = a_node->parent; parent; parent = parent->parent) {
+        if (parent == a_root) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void SmokeManager::ReregisterEmitter(RE::NiAVObject* a_node)
@@ -487,4 +566,64 @@ void SmokeManager::ReregisterEmitter(RE::NiAVObject* a_node)
         std::string_view(a_node->name.c_str() ? a_node->name.c_str() : ""),
         reinterpret_cast<std::uintptr_t>(ps),
         emitters.size());
+}
+
+bool SmokeManager::ToggleEmitter(RE::NiAVObject* a_node, bool a_enable)
+{
+    if (!a_node) {
+        return false;
+    }
+
+    auto* node = a_node->AsNode();
+    if (!node) {
+        return false;
+    }
+
+    const auto toggle = EngineAPI::GetToggleMasterParticleAddonNodes();
+    if (!toggle) {
+        logger::error("[DynamicSmoking] ToggleMasterParticleAddonNodes unavailable");
+        return false;
+    }
+
+    const bool result = toggle(node, a_enable);
+    logger::debug("[DynamicSmoking] ToggleMasterParticleAddonNodes(anchor='{}', {}) -> {}",
+        std::string_view(a_node->name.c_str() ? a_node->name.c_str() : ""),
+        a_enable,
+        result);
+    return result;
+}
+
+void SmokeManager::DetachAnchor(RE::BSValueNode* a_node, RE::NiNode* a_root)
+{
+    if (!a_node) {
+        return;
+    }
+
+    // 保证 DetachAnchor 执行期间节点不会被析构；调用方通常已经通过 tracked 持有一份引用。
+    RE::NiPointer<RE::BSValueNode> keepAlive(a_node);
+    (void)keepAlive;
+
+    const char* name = a_node->name.c_str();
+    auto*       ps = a_node->associatedObject.get();
+    if (ps) {
+        auto& emitters = ps->emitterObjs;
+        for (auto it = emitters.begin(); it != emitters.end(); ++it) {
+            if (it->get() == a_node) {
+                emitters.erase(it);
+                logger::info("[DynamicSmoking] detached emitter: anchor='{}' ps={:#x} emitters={}",
+                    name ? name : "",
+                    reinterpret_cast<std::uintptr_t>(ps),
+                    emitters.size());
+                break;
+            }
+        }
+    }
+
+    a_node->SetAppCulled(true);
+    a_node->associatedObject.reset();
+
+    // 只在仍能确认父节点有效时从场景图摘除；root 已销毁时不能碰 node->parent
+    if (a_root && a_node->parent == a_root) {
+        a_root->DetachChild(a_node);
+    }
 }

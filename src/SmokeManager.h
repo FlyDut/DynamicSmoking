@@ -36,11 +36,12 @@ private:
 
     struct TrackedSmoke
     {
-        RE::ObjectRefHandle refHandle;
-        std::string         anchorName;
-        bool                visible = true;
-        bool                hiding = false;
-        std::uint32_t       hiddenSinceMS = 0;
+        RE::ObjectRefHandle                refHandle;
+        RE::NiPointer<RE::BSValueNode>     anchor;
+        std::string                        anchorName;
+        bool                               visible = true;
+        bool                               hiding = false;
+        std::uint32_t                      hiddenSinceMS = 0;
     };
 
     void BuildIndex();
@@ -49,9 +50,17 @@ private:
 
     void AttachRules(RE::TESObjectREFR* a_refr, RE::NiAVObject* a_root, const std::vector<IndexEntry>& a_entries);
 
-    void RegisterTracked(RE::TESObjectREFR* a_refr, const std::string& a_anchorName);
+    void RegisterTracked(RE::TESObjectREFR* a_refr, const std::string& a_anchorName, RE::BSValueNode* a_anchor);
 
-    static void ReregisterEmitter(RE::NiAVObject* a_node);
+    static bool ToggleEmitter(RE::NiAVObject* a_node, bool a_enable);
+
+    static bool IsAnchorUnderRoot(RE::NiAVObject* a_node, RE::NiNode* a_root);
+
+    void ReregisterEmitter(RE::NiAVObject* a_node);
+
+    static void DetachAnchor(RE::BSValueNode* a_node, RE::NiNode* a_root);
+
+    void DetachTrackedAnchor(TrackedSmoke& a_entry, RE::NiNode* a_root = nullptr);
 
     std::map<std::string, Config::TargetSet> rawConfigs;
 
@@ -67,6 +76,8 @@ private:
     std::vector<TrackedSmoke> tracked;
 
     std::uint32_t lastUpdateMS{ 0 };
+
+    RE::FormID lastPlayerCellID{ 0 };
 
     bool indexReady{ false };
 
